@@ -163,6 +163,26 @@ def summary() -> dict[str, Any]:
     except AttributeError:
         mode = None
 
+    # 🚨 ON A MARKER-BOUND EDIT THE CUTS ARE NOT IN THE CAMERA'S ACTION.
+    # `slates-camera-language` recommends a camera per setup bound to timeline
+    # markers for anything past a handful of cuts, and on that rig the active
+    # camera is usually static (a Track To constraint does the aiming), so
+    # `camera.keyframeSeconds` comes back EMPTY. The other skills tell the agent
+    # to write its prompt timings from exactly that field, so without markers
+    # here it would fall back to the shot list it *intended* to build — the one
+    # failure this read-back exists to prevent. Caught on a 3-setup test scene
+    # 2026-08-28. Seconds share `_camera_track`'s origin so every timestamp in
+    # the summary is measured the same way.
+    markers = [
+        {
+            "name": m.name,
+            "frame": m.frame,
+            "seconds": round((m.frame - scene.frame_start) / fps, 3),
+            "camera": m.camera.name if m.camera else None,
+        }
+        for m in sorted(scene.timeline_markers, key=lambda m: m.frame)
+    ]
+
     result: dict[str, Any] = {
         "scene": scene.name,
         "unitSystem": scene.unit_settings.system,
@@ -181,9 +201,16 @@ def summary() -> dict[str, Any]:
         "activeObject": active.name if active else None,
         "mode": mode,
         "camera": None,
+        "markers": markers,
+        # THE cut list, whichever rig produced it: marker frames when markers
+        # bind cameras, otherwise the active camera's own keyframes. One field
+        # to read means an agent cannot pick the empty one by accident.
+        "cutSeconds": [m["seconds"] for m in markers if m["camera"]],
         "collections": _collection_tree(view_layer.layer_collection),
     }
 
     if scene.camera is not None:
         result["camera"] = _camera_track(scene.camera, scene)
+        if not result["cutSeconds"]:
+            result["cutSeconds"] = result["camera"]["keyframeSeconds"]
     return result
