@@ -70,20 +70,73 @@ def _collection_tree(layer_collection) -> dict[str, Any]:
     }
 
 
+def _action_fcurves(anim):
+    """Every F-curve driving *anim*, across both Action layouts.
+
+    🚨 `Action.fcurves` DOES NOT EXIST ANY MORE. Slotted Actions moved the
+    curves to `action.layers[].strips[]` → `strip.channelbag(slot)` → `.fcurves`,
+    with the slot coming off `animation_data.action_slot`. Verified against a
+    live Blender 5.2.1 on 2026-08-28: `hasattr(action, "fcurves")` is False, and
+    the old line raised `AttributeError: 'Action' object has no attribute
+    'fcurves'` the moment a camera actually had keyframes on it — i.e. on every
+    real previs scene, while an unanimated default scene passed happily.
+
+    Feature-detected rather than version-branched, the same rule
+    `_select_video_output` follows: legacy actions still expose `.fcurves`, and
+    a build that has both should use the one it actually has.
+    """
+    action = getattr(anim, "action", None)
+    if action is None:
+        return
+
+    legacy = getattr(action, "fcurves", None)
+    if legacy is not None:
+        yield from legacy
+        return
+
+    # A slot binds this datablock to its own channels inside the action; an
+    # action assigned without one animates nothing, so there is nothing to walk.
+    slot = getattr(anim, "action_slot", None)
+    if slot is None:
+        return
+
+    for layer in getattr(action, "layers", ()):
+        for strip in getattr(layer, "strips", ()):
+            # Only keyframe strips carry channelbags. Anything else (a future
+            # strip type) is skipped rather than guessed at.
+            channelbag = getattr(strip, "channelbag", None)
+            if channelbag is None:
+                continue
+            try:
+                bag = channelbag(slot)
+            except (RuntimeError, TypeError):
+                continue
+            if bag is not None:
+                yield from bag.fcurves
+
+
 def _camera_track(camera, scene) -> dict[str, Any]:
     """Keyframe times on the camera, so the agent can see the cut structure."""
     times: set[int] = set()
     for holder in (camera, camera.data):
         anim = holder.animation_data
-        if anim and anim.action:
-            for fcurve in anim.action.fcurves:
+        if anim:
+            for fcurve in _action_fcurves(anim):
                 for kp in fcurve.keyframe_points:
                     times.add(int(round(kp.co[0])))
     fps = scene.render.fps / max(scene.render.fps_base, 1e-6)
+    # 🚨 SECONDS ARE MEASURED FROM `frame_start`, NOT FROM FRAME ZERO.
+    # These timestamps exist to be quoted back in a generation prompt against
+    # the blocking clip, and in that clip the FIRST RENDERED FRAME is t=0. A
+    # plain `t / fps` made frame 1 land at 0.042s on a default scene, so every
+    # cut an agent wrote was one frame late — consistently, invisibly, and in
+    # direct contradiction of the `slates-previs-blocking` skill's own rule
+    # (`frame = seconds x fps + 1`). Caught on real footage 2026-08-28.
+    origin = scene.frame_start
     return {
         "name": camera.name,
         "keyframes": sorted(times),
-        "keyframeSeconds": [round(t / fps, 3) for t in sorted(times)],
+        "keyframeSeconds": [round((t - origin) / fps, 3) for t in sorted(times)],
         "animated": bool(times),
     }
 

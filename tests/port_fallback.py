@@ -42,9 +42,41 @@ def _incumbent(port: int) -> socket.socket:
     return sock
 
 
+def _range_is_clear(first: int, last: int) -> list[int]:
+    """Ports in 9876-9879 that something else already holds.
+
+    ⚠️ THE PRECONDITION IS WORTH ASSERTING. This test's whole method is "hold a
+    port, prove the bridge steps over it" — which silently inverts if a real
+    Blender is already serving the bridge on 9876. Running it during a live
+    session then reports "a free base port is still taken first: got 9877",
+    which reads exactly like the regression it is not.
+    """
+    busy = []
+    for port in range(first, last + 1):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            busy.append(port)
+        finally:
+            probe.close()
+    return busy
+
+
 def main() -> int:
     install_bpy_stub()
     import slates_blender as addon
+
+    busy = _range_is_clear(addon.DEFAULT_PORT, addon.DEFAULT_PORT + addon.PORT_FALLBACKS)
+    if busy:
+        print(
+            "  SKIPPED: ports {} already in use. Close the Blender that is serving "
+            "the bridge (or stop it from the Slates panel) and run this again; this "
+            "test needs the whole {}-{} range to itself.".format(
+                busy, addon.DEFAULT_PORT, addon.DEFAULT_PORT + addon.PORT_FALLBACKS
+            )
+        )
+        return 0
 
     failures: list[str] = []
 

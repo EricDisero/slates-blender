@@ -14,6 +14,7 @@ Usage:  python scripts/build.py [--out dist]
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import re
 import sys
@@ -61,6 +62,15 @@ def main() -> int:
     out_dir = os.path.join(ROOT, args.out)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"slates_blender-{version}.zip")
+
+    # 🚨 ONE ZIP IN dist/, ALWAYS. Two builds side by side is a person dragging
+    # the wrong one into Blender and a session spent debugging a fix that is
+    # already applied. The published bucket follows the same rule via
+    # `slates-api/scripts/upload-web-asset.mjs --prune`; this is its local half.
+    for stale in sorted(glob.glob(os.path.join(out_dir, "slates_blender-*.zip"))):
+        if os.path.abspath(stale) != os.path.abspath(out_path):
+            os.remove(stale)
+            print(f"removed stale build {os.path.basename(stale)}")
 
     count = 0
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
