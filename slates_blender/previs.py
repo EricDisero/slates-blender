@@ -84,6 +84,42 @@ _SCENE_ATTRS = ("frame_start", "frame_end")
 _IMAGE_SETTINGS_ATTRS = ("media_type", "file_format")
 _FFMPEG_ATTRS = ("format", "codec", "constant_rate_factor", "ffmpeg_preset", "gopsize")
 
+# 🚨 WORKBENCH RENDERS FROM THE SCENE, SO SWITCHING THE ENGINE INHERITS
+# WHATEVER THAT SCENE HELD. `scene.display.shading` is Workbench's own render
+# shading (not the 3D viewport's), and nothing here ever set it — so a blocking
+# clip's colour semantics AND its backdrop silently depended on values the user
+# may never have opened. Caught 2026-08-28 on a real previs scene: unpinned, a
+# perturbed scene moved the floor 132.6 → 117.9 and the background to RED.
+#
+# `MATERIAL` is the documented default (`data/api/bpy.types.View3DShading.rst`)
+# and is the safe pin in BOTH directions: an object with a material renders its
+# `diffuse_color`, and an object with NO material falls back to Workbench's own
+# neutral grey — exactly the grey set previs wants. `OBJECT` would render every
+# unpainted object pure WHITE, blowing out the floors, walls and props nobody
+# thought to assign a colour to. The skills tell agents to set `diffuse_color`
+# and `object.color` together, so a compliant scene renders identically either
+# way; this only decides what happens when they disagree.
+#
+# Pinned to Blender's own defaults except `background_type`, which is pinned
+# AWAY from the default `THEME` on purpose: a theme background is a USER
+# PREFERENCE, so an identical .blend would render a different backdrop on a
+# different machine. `VIEWPORT` + an explicit colour is the only fully
+# deterministic option. It matters more than it looks — the skills tell the
+# model a flat background is a PLACEHOLDER to replace, so a user's red viewport
+# would arrive as content to dress rather than a hole to fill.
+_PREVIS_SHADING = {
+    "color_type": "MATERIAL",
+    "light": "STUDIO",
+    "studio_light": "Default",
+    "background_type": "VIEWPORT",
+    "background_color": (0.05, 0.05, 0.05),
+    "show_shadows": False,
+    "show_cavity": False,
+    "show_object_outline": False,
+    "show_specular_highlight": True,
+}
+_SHADING_ATTRS = tuple(_PREVIS_SHADING)
+
 _VIDEO_SUFFIXES = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".ogv")
 
 # How long a deferred render may take to appear in `bpy.app.is_job_running`
@@ -97,7 +133,19 @@ class PrevisError(RuntimeError):
 
 
 def _snapshot(owner, attrs) -> list[tuple[object, str, object]]:
-    return [(owner, a, getattr(owner, a)) for a in attrs if hasattr(owner, a)]
+    saved: list[tuple[object, str, object]] = []
+    for attr in attrs:
+        if not hasattr(owner, attr):
+            continue
+        value = getattr(owner, attr)
+        # 🚨 An RNA ARRAY property (a colour, a vector) hands back a LIVE proxy
+        # into Blender's own memory, not a value. Storing the reference would
+        # make `_restore` write back whatever we had just overwritten it with —
+        # a snapshot that silently restores nothing. Copy it now.
+        if hasattr(value, "__len__") and not isinstance(value, (str, bytes)):
+            value = tuple(value)
+        saved.append((owner, attr, value))
+    return saved
 
 
 def _restore(saved) -> None:
@@ -216,12 +264,16 @@ def render_blocking(
     render = scene.render
     image_settings = render.image_settings
     ffmpeg = render.ffmpeg
+    # Feature-detected rather than assumed, the same rule `_select_video_output`
+    # follows — a build without `scene.display` costs the pin, never the render.
+    shading = getattr(getattr(scene, "display", None), "shading", None)
 
     saved = (
         _snapshot(render, _SCENE_RENDER_ATTRS)
         + _snapshot(scene, _SCENE_ATTRS)
         + _snapshot(image_settings, _IMAGE_SETTINGS_ATTRS)
         + _snapshot(ffmpeg, _FFMPEG_ATTRS)
+        + (_snapshot(shading, _SHADING_ATTRS) if shading is not None else [])
     )
 
     def finish() -> dict[str, object]:
@@ -257,6 +309,10 @@ def render_blocking(
 
     try:
         render.engine = _PREVIS_ENGINE
+        if shading is not None:
+            for _attr, _value in _PREVIS_SHADING.items():
+                if hasattr(shading, _attr):
+                    setattr(shading, _attr, _value)
         render.resolution_x = int(resolution_x)
         render.resolution_y = int(resolution_y)
         render.resolution_percentage = 100
