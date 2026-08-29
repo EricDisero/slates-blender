@@ -1,0 +1,34 @@
+schema_version = "1.0.0"
+
+id = "slates_blender"
+version = "0.1.0"
+name = "Slates"
+tagline = "Block shots in 3D and drive Slates video generation from Blender"
+maintainer = "Slates <support@slates.video>"
+type = "add-on"
+website = "https://slates.video"
+
+# The bundled Blender API reference and user manual under `slates_blender/data`
+# are the 5.1 documentation set. The floor is deliberate: an agent grepping 4.x
+# docs to write 5.x `bpy` is worse than an agent with no docs at all, because
+# wrong-but-plausible signatures read as authoritative.
+blender_version_min = "5.1.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+platforms = ["windows-x64", "macos-arm64", "macos-x64", "linux-x64"]
+
+# Pure-python, needed by the RST doc parser.
+wheels = ["./wheels/docutils-0.23-py3-none-any.whl"]
+
+[permissions]
+network = "Accept local connections from the Slates MCP server on 127.0.0.1"
+files = "Write viewport renders so they can be imported into a Slates project"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "**/AGENTS.md",
+  "/scripts/",
+  "/.git/",
+  "/README.md",
+]
