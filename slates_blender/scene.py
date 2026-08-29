@@ -99,6 +99,17 @@ def summary() -> dict[str, Any]:
     frames = scene.frame_end - scene.frame_start + 1
     active = view_layer.objects.active
 
+    # ⚠️ `context.mode` IS GUARDED ON PURPOSE. This whole function runs inside a
+    # `bpy.app.timers` callback, where the context is the window manager's and
+    # not an operator's — upstream's own objects-summary tool reads it as
+    # `context.mode if active else None` for the same reason. `summary()` is the
+    # first call of every previs workflow (`slates_blender_status` runs it), so
+    # one attribute being unavailable must not take the whole handshake down.
+    try:
+        mode = context.mode if active is not None else None
+    except AttributeError:
+        mode = None
+
     result: dict[str, Any] = {
         "scene": scene.name,
         "unitSystem": scene.unit_settings.system,
@@ -115,7 +126,7 @@ def summary() -> dict[str, Any]:
             "resolutionPercentage": render.resolution_percentage,
         },
         "activeObject": active.name if active else None,
-        "mode": context.mode,
+        "mode": mode,
         "camera": None,
         "collections": _collection_tree(view_layer.layer_collection),
     }

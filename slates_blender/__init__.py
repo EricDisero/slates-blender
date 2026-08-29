@@ -161,7 +161,12 @@ class SLATES_OT_render_blocking(bpy.types.Operator):
         from . import previs
 
         try:
-            result = previs.render_blocking()
+            # `defer=False` because this call is NOT coming from the bridge's
+            # timer — it is a button press with a real operator context, where a
+            # synchronous render is safe and is the only shape that can hand the
+            # path straight to the clipboard. Blender is busy while it runs,
+            # which is what a user pressing a render button expects.
+            result = previs.render_blocking(defer=False)
         except Exception as error:  # noqa: BLE001
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}

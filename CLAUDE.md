@@ -9,10 +9,11 @@ slates-blender/
 ├── blender_manifest.toml     ← extension manifest (id, version, wheels, version floor)
 ├── wheels/docutils-*.whl     ← required by the RST parser
 ├── scripts/build.py          ← zips the extension (hoists slates_blender/* to root)
+├── tests/port_fallback.py    ← asserts the bridge never binds an occupied port
 ├── tests/serve_stub.py       ← runs the real bridge against a stubbed bpy
 └── slates_blender/
     ├── __init__.py           ← registration, panel, operators, port binding
-    ├── previs.py             ← THE deliverable: viewport render → mp4
+    ├── previs.py             ← THE deliverable: scene-camera render → mp4
     ├── scene.py              ← scene/camera/collection summary
     ├── docs.py               ← API lookup + full-text search over data/
     ├── bridge/               ← VENDORED (Blender Authors, GPL-3.0)
@@ -30,6 +31,10 @@ slates-blender/
 - **The add-on is a dumb executor and must stay one.** No model choice, no prompts, no credit logic, no project state. Anything that would need a plugin reinstall to change belongs in `slates-mcp` instead.
 - **`blender_version_min` tracks the bundled docs.** The corpus under `data/` is Blender 5.1. If you refresh the docs, move the floor with them; mismatched docs are worse than none because wrong-but-plausible signatures read as authoritative.
 - **Everything a `bpy` call touches gets snapshotted and restored.** `previs.py` runs inside the user's live .blend. Leaving the engine on Workbench or the format on FFMPEG corrupts their next hand render. `_snapshot`/`_restore` exist for this; use them.
+- **🚨 `render.render`, NEVER `render.opengl` — and INVOKE it, don't EXEC it.** Two mistakes that both shipped in the first cut and were caught 2026-08-28 by reading upstream's own render tools plus the manual we bundle.
+  - *Viewport render is viewport-anchored.* `data/manual/editors/3dview/viewport_render.rst`: it renders "from the current viewpoint (rather than from the active camera, as would be the case with a regular render)", and "if you are not in an active camera view, a virtual camera is used to match the current perspective." `view_context=False` does not buy the camera back, and it is a 3D-Viewport menu operator needing an area/region the bridge's timer callback does not have. A blocking clip whose framing depends on where the user left their mouse is worthless. `render.render` goes through the scene camera and the scene render settings — which is what makes `_PREVIS_ENGINE = BLENDER_WORKBENCH` load-bearing rather than decorative.
+  - *A synchronous animation render from a timer re-enters the main loop running it.* Upstream (`blmcp/tools/render_*_toolcode.py`) invokes with `INVOKE_DEFAULT` whenever `not bpy.app.background` and returns a `check_is_finished` that polls `bpy.app.is_job_running('RENDER')`. We do the same, and `bridge/deferred.py` — already vendored — holds the socket open and answers with the identical `{status, result}` envelope, so no caller can tell. **The snapshot must NOT be restored in a `finally` on that path**: the invoke returns before a frame exists, and upstream carries the same warning. Restore inside the checker, after the job ends.
+  - *"Not running" means "finished" only after it has started.* The bridge polls 50ms after the invoke, before Blender has spun the job up, so the checker must see the job running once (or let a grace window lapse) before it believes the render is over.
 - **Never guess the render output filename.** For video containers Blender appends the frame range to `filepath` and no setting turns that off. Render into an exclusive directory and discover what landed — see `_newest_video_in`.
 - **🚨 Video output selection MOVED in Blender 5.0 — feature-detect, never branch on version.** 4.x selected it with `image_settings.file_format = 'FFMPEG'`. 5.x uses `image_settings.media_type = 'VIDEO'`, and `file_format` now enumerates image formats only — `'FFMPEG'` is not among them, so the 4.x line *raises* on the version this add-on pins. `_select_video_output` checks for the attribute, which is the thing we actually depend on. Encoding properties (`ffmpeg.format`, `.codec`, `.constant_rate_factor`, `.ffmpeg_preset`, `.gopsize`) go through `_apply_ffmpeg`, which skips whatever a build does not expose — a missing encoding option should cost a slightly bigger file, never a failed render.
   - **How this was caught, and the lesson:** the bundled `data/api/bpy.types.FFmpegSettings.rst` lists only the two audio attributes, while `data/manual/render/output/properties/output.rst` documents container/codec/CRF under `bpy.types.FFmpegSettings.*` anchors. **The API corpus is incomplete for some structs; the manual is the tiebreak.** When the API reference looks like a property vanished, check the manual before believing it.
@@ -45,6 +50,8 @@ slates-blender/
 ```
 
 Executed code must assign a dict to `result`. `strict_json:false` means a stray Blender object comes back as its repr rather than failing the call — the agent can correct itself from a repr, not from a serialization error.
+
+**Deferred replies are part of the protocol, not an extension of it.** Code that starts a background job (a render) assigns a callable to `check_is_finished` INSTEAD of `result`. The bridge then keeps the socket open, polls that callable on its own timer, and finally sends the same `{"status":"ok","result":…}` envelope — so the client sees one request and one reply either way and needs no special case. Whatever the callable returns becomes `result`; returning `None` means "still going". This is upstream's convention (`bridge/deferred.py`), and `slates_blender_render_blocking` is the op that uses it.
 
 The client is `slates-mcp/packages/shared/src/clients/blender.ts`. **Protocol changes are a two-repo edit** and the client probes ports 9876-9879 in the same order the add-on binds them.
 

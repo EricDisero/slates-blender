@@ -10,10 +10,14 @@ Blender install in CI. Nothing in `server.py` imports `bpy` at module scope;
 only the weak sandbox reaches for `bpy.ops`, so a stub with the one attribute
 it patches is enough to run the whole request path for real.
 
-What this does NOT cover: anything that actually touches a scene. `previs.py`
-and `scene.py` need a real Blender and are verified by running the add-on.
+The DEFERRED path is testable here too: `bpy.app.is_job_running` is stubbed
+against `bpy.app._jobs`, so test code can start a fake `RENDER` job, end it,
+and watch a real client receive the reply on the socket it never let go of.
 
-Usage:  python tests/serve_stub.py [--port 9876] [--seconds 30]
+What this does NOT cover: anything that actually touches a scene. `previs.py`
+and `scene.py` reach `bpy.context` and need a real Blender.
+
+Usage:  python tests/serve_stub.py [--port 9876] [--seconds 30] [--background]
 """
 
 from __future__ import annotations
@@ -84,7 +88,20 @@ def install_bpy_stub() -> None:
         unregister=lambda *a, **k: None,
         is_registered=lambda *a, **k: False,
     )
-    app = types.SimpleNamespace(background=True, tempdir="/tmp", timers=timers)
+
+    # `is_job_running` is here so the DEFERRED path can be exercised without
+    # Blender: `previs.render_blocking` polls it, and it is the one piece of
+    # `bpy` that decides whether the bridge holds a socket open or answers now.
+    # Test code drives it by setting `bpy.app._jobs`.
+    jobs: set[str] = set()
+
+    app = types.SimpleNamespace(
+        background=True,
+        tempdir="/tmp",
+        timers=timers,
+        is_job_running=lambda job_type: job_type in jobs,
+    )
+    app._jobs = jobs
 
     utils = types.SimpleNamespace(
         register_class=lambda cls: None,
@@ -106,6 +123,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=9876)
     parser.add_argument("--seconds", type=float, default=30.0)
+    parser.add_argument(
+        "--background",
+        action="store_true",
+        help=(
+            "Drive the blocking single-request path instead of the interactive "
+            "poll loop. Deferred responses are REFUSED on this path (upstream "
+            "does not support them headless), so it cannot test a render."
+        ),
+    )
     args = parser.parse_args()
 
     install_bpy_stub()
@@ -121,8 +147,14 @@ def main() -> int:
     deadline = time.monotonic() + args.seconds
     try:
         while time.monotonic() < deadline:
-            # Background mode has no Blender timer, so drive the blocking path.
-            server.poll_blocking(timeout=0.25)
+            if args.background:
+                # No Blender timer headless, so drive the blocking path.
+                server.poll_blocking(timeout=0.25)
+            else:
+                # What `execute.run` does on Blender's timer — the path that
+                # actually ships, and the only one that services deferred work.
+                server.poll()
+                time.sleep(server.TIMER_INTERVAL_ACTIVE)
     except KeyboardInterrupt:
         pass
     finally:

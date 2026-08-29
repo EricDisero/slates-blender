@@ -18,11 +18,21 @@ retained in every adapted file. Changes made by Slates:
 - `mcp_bridge/` renamed to `bridge/`, module names shortened
   (`mcp_to_blender_server` → `server`, `capture_output` → `capture`,
   `weak_sandbox` → `sandbox`, `deferred_tool` → `deferred`), imports rewritten
-  to match. Protocol, threading model and semantics are unchanged.
+  to match. Protocol, threading model and semantics are unchanged. Verified
+  against the upstream copy on 2026-08-28: `capture.py` and `sandbox.py` are
+  byte-identical, and `server.py`, `deferred.py` and `execute.py` differ from
+  theirs only in the renamed import lines.
+- `bridge/__init__.py` is the one adapted file that goes further: the package
+  docstring is ours, `__import__("bpy")` is written as a plain import, and the
+  four public functions gained type annotations. It is a thin facade over the
+  modules above and their behaviour is untouched, but it is a rewrite rather
+  than an import fix and is recorded here as one.
 - `tools_helpers/rst_doc_search.py` and `rst_parse_docs.py` moved to
   `rst/doc_search.py` and `rst/parse_docs.py`; the only edit is the import
   rewrite from `blmcp.tools_helpers.rst_parse_docs` to `.parse_docs`.
-- `data/prompts.yml` retained as `data/blender-instructions.yml`.
+- `data/prompts.yml` retained as `data/blender-instructions.yml`. Every other
+  file under `data/` is redistributed unmodified — all 4,390 verified
+  byte-identical to the upstream corpus on 2026-08-28.
 
 `slates_blender/previs.py`, `scene.py`, `docs.py` and `__init__.py` are original
 work by Slates, also GPL-3.0-or-later.
