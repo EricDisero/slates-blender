@@ -240,11 +240,20 @@ def _autostart() -> None:
 def register() -> None:
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
-    if not bpy.app.background:
+    # `is_registered` guards a hot reload: disable-then-enable inside the 100ms
+    # window would otherwise leave two pending one-shots. Harmless today —
+    # `start_bridge` is idempotent — but it is the house pattern in every
+    # Blender add-on for a reason, and the next timer added here may not be.
+    if not bpy.app.background and not bpy.app.timers.is_registered(_autostart):
         bpy.app.timers.register(_autostart, first_interval=0.1)
 
 
 def unregister() -> None:
+    # Drop the autostart before stopping the bridge, or disabling the add-on
+    # inside that same 100ms window starts one back up for an add-on that is no
+    # longer registered.
+    if bpy.app.timers.is_registered(_autostart):
+        bpy.app.timers.unregister(_autostart)
     stop_bridge()
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)
