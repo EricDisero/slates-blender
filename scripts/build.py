@@ -95,6 +95,22 @@ def main() -> int:
 
     size_mb = os.path.getsize(out_path) / (1024 * 1024)
     print(f"{out_path}\n{count} files, {size_mb:.1f} MB")
+
+    # 🚨 A BUILD IS NOT A RELEASE. Users install through an extension
+    # REPOSITORY, so a zip nobody has listed is a zip nobody receives — their
+    # Blender keeps offering the previous version and nothing reports it. These
+    # are the remaining steps, printed rather than remembered.
+    zip_name = os.path.basename(out_path)
+    print("")
+    for step in (
+        "Next, to actually ship it:",
+        f"  1. blender --command extension server-generate --repo-dir={args.out}",
+        "  2. from slates-api/ (index.json is a MUTABLE manifest, hence --replace):",
+        f"       node scripts/upload-web-asset.mjs ../slates-blender/{args.out}/{zip_name} --prefix blender --prune",
+        f"       node scripts/upload-web-asset.mjs ../slates-blender/{args.out}/index.json --prefix blender --replace",
+        "  3. bump BLENDER_ADDON_VERSION in slates-web/src/app/lib/blender.ts, then vercel --prod",
+    ):
+        print(step)
     return 0
 
 

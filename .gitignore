@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
 dist/
+dist-repo/
 .DS_Store
 .venv/
