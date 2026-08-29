@@ -34,6 +34,7 @@ slates-blender/
 - **🚨 Video output selection MOVED in Blender 5.0 — feature-detect, never branch on version.** 4.x selected it with `image_settings.file_format = 'FFMPEG'`. 5.x uses `image_settings.media_type = 'VIDEO'`, and `file_format` now enumerates image formats only — `'FFMPEG'` is not among them, so the 4.x line *raises* on the version this add-on pins. `_select_video_output` checks for the attribute, which is the thing we actually depend on. Encoding properties (`ffmpeg.format`, `.codec`, `.constant_rate_factor`, `.ffmpeg_preset`, `.gopsize`) go through `_apply_ffmpeg`, which skips whatever a build does not expose — a missing encoding option should cost a slightly bigger file, never a failed render.
   - **How this was caught, and the lesson:** the bundled `data/api/bpy.types.FFmpegSettings.rst` lists only the two audio attributes, while `data/manual/render/output/properties/output.rst` documents container/codec/CRF under `bpy.types.FFmpegSettings.*` anchors. **The API corpus is incomplete for some structs; the manual is the tiebreak.** When the API reference looks like a property vanished, check the manual before believing it.
 - **Main thread only.** `bpy` is not thread-safe. The bridge already marshals execution onto Blender's timer; never spawn a thread that touches `bpy.data` or `bpy.ops`.
+- **🚨 `bind()` failing is NOT how you learn a port is taken — probe it first.** `bridge/server.py` sets `SO_REUSEADDR` (vendored, not ours to change). On Linux/macOS that only permits rebinding a `TIME_WAIT` socket, so a live listener still makes `bind` raise. **On Windows it lets a second process bind a port another process is already LISTENING on** — verified 2026-08-28, two listeners on 127.0.0.1:9876, no error. `start_bridge`'s walk-forward therefore never fired: a second Blender bound 9876 too, and the MCP client (which probes 9876 first) drove whichever one Windows routed to — a render into the wrong .blend, silently. `_port_is_free` binds a plain optionless socket first, which is refused everywhere. `tests/port_fallback.py` locks it, and the same asymmetry applies to any future listener here.
 
 ## Wire protocol
 
@@ -56,7 +57,14 @@ Put it in `previs.py` / `scene.py` / `docs.py`, then reach it from an op with `_
 ```bash
 python scripts/build.py                 # → dist/
 python -m compileall -q slates_blender  # syntax check
-python tests/serve_stub.py              # protocol test, no Blender needed
+python tests/port_fallback.py           # asserts; the one that must stay green
+python tests/serve_stub.py              # serves the real bridge for 30s, no Blender needed
 ```
+
+`serve_stub.py` is a HARNESS, not an assertion suite — it stands the real
+`bridge/server.py` up against a stubbed `bpy` so you can drive it from the
+Node client (`slates-mcp/packages/shared/dist/clients/blender.js`) and watch
+the framing, the JSON envelope and the error paths for real. `port_fallback.py`
+is the one that passes or fails on its own.
 
 Delete `__pycache__` before building; `scripts/build.py` excludes it, but it pollutes greps.

@@ -17,6 +17,8 @@ derivative work.
 
 from __future__ import annotations
 
+import socket
+
 import bpy
 
 from . import bridge
@@ -44,6 +46,37 @@ def status() -> tuple[str, str]:
     return ("stopped", "")
 
 
+def _port_is_free(port: int) -> OSError | None:
+    """``None`` when nothing holds *port*, else the ``OSError`` that says so.
+
+    🚨 WITHOUT THIS THE FALLBACK LOOP BELOW IS A NO-OP ON WINDOWS.
+    ``bridge.start`` sets ``SO_REUSEADDR`` (vendored upstream — see the hard
+    rule in ``CLAUDE.md``: we do not edit ``bridge/``). On Linux and macOS that
+    only permits rebinding a socket in ``TIME_WAIT``, so a live listener still
+    makes ``bind`` raise and the walk-forward works. **On Windows
+    ``SO_REUSEADDR`` means something else entirely:** it lets a second process
+    bind a port another process is already LISTENING on. Verified 2026-08-28 —
+    two listeners on 127.0.0.1:9876, no error. So a second Blender would bind
+    9876 too, never advance, and the MCP client — which probes 9876 first —
+    would silently drive whichever of the two Windows routed the connection to.
+    A render lands in the wrong .blend and nothing anywhere reports it.
+
+    A plain socket carrying NO options is refused in that situation on every
+    platform, which is what makes it a usable probe. It closes before
+    ``bridge.start`` binds for real; the gap is a few microseconds against a
+    port range only this add-on uses, and losing that race still ends in the
+    honest ``OSError`` the loop already handles.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((BRIDGE_HOST, port))
+    except OSError as error:
+        return error
+    finally:
+        probe.close()
+    return None
+
+
 def start_bridge() -> int:
     """Bind the first free port in the range. Returns the port."""
     global _active_port, _last_error
@@ -54,6 +87,10 @@ def start_bridge() -> int:
     _last_error = ""
     last_os_error: OSError | None = None
     for candidate in range(DEFAULT_PORT, DEFAULT_PORT + PORT_FALLBACKS + 1):
+        taken = _port_is_free(candidate)
+        if taken is not None:
+            last_os_error = taken
+            continue
         try:
             bridge.start(BRIDGE_HOST, candidate)
         except OSError as error:
