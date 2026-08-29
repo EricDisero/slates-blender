@@ -112,6 +112,23 @@ Dragged into Blender that URL installs the add-on AND subscribes the user to the
 repository. A bare `.zip` installs once and is then frozen. Documented at
 `data/manual/advanced/extensions/creating_repository/static_repository.rst`.
 
+🚨 **SUBSCRIBED IS NOT AUTO-UPDATING, AND THERE IS NO PARAMETER THAT MAKES IT
+SO.** `UserExtensionRepo.use_sync_on_startup` is **False by default** for any repo a
+user adds (`data/api/bpy.types.UserExtensionRepo.rst`: "Allow Blender to check for
+updates upon launch (default False)") — `extensions.blender.org` only checks on
+launch because Blender ships it pre-enabled. The install URL accepts exactly
+`repository`, `blender_version_min`, `blender_max` and `platforms`, so nothing we
+put in the link can switch it on. **A subscribed user who restarts Blender still
+sees the old version.** Verified 2026-08-28: restarted a Blender subscribed to this
+repo with 0.1.4 published and it stayed on 0.1.3.
+
+What the subscription actually buys is the in-Blender update PATH (Get Extensions →
+Refresh Remote → Update) instead of hunting for a zip — real, just not automatic.
+Turning it on is one tick the USER has to make, so it has to be *told* to them:
+`slates-web/src/app/blender/page.tsx` carries those instructions and is the only
+place a stuck user will look. **Never write "it updates itself" anywhere** — that
+copy shipped and was wrong.
+
 ⚠️ `blender_version_max` is deliberately omitted: Blender's own manual spells it
 two ways on one page (`blender_version_max` in the parameter list, `blender_max`
 in the format example) and we set no maximum anyway.
