@@ -12,7 +12,9 @@ The execution bridge (`slates_blender/bridge/`), the RST documentation readers
 
 Obtained via the `blender_mcp-1.0.0` wheel distributed inside Higgsfield Inc.'s
 GPL-3.0-or-later `higgsfield_blender` add-on (v1.5.47), which vendored upstream
-revision `98b0e49d98321d321c7e631389200f513f765d59`. Upstream SPDX headers are
+revision `98b0e49d98321d321c7e631389200f513f765d59`. That add-on is archived
+unpacked at `Z:\Archive\Code\higgsfield-blender-1.5.47-upstream\` (4,645 files,
+sha256-verified 2026-08-29) so the byte-identity claims below stay checkable. Upstream SPDX headers are
 retained in every adapted file. Changes made by Slates:
 
 - `mcp_bridge/` renamed to `bridge/`, module names shortened
